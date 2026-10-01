@@ -72,5 +72,44 @@ ORDER BY order_id;
 -- указываем явно.
 
 
+-- 3. НАРУШЕНИЯ ПОРЯДКА ДАТ
+
+WITH checks AS (
+	SELECT
+		COUNT(*) FILTER (WHERE order_approved_at < order_purchase_timestamp) AS approved_to_purchase,
+		COUNT(*) FILTER (WHERE order_purchase_timestamp IS NOT NULL AND order_approved_at IS NOT NULL) AS approved_count,
+		COUNT(*) FILTER (WHERE order_delivered_carrier_date < order_approved_at) AS carrier_to_approved,
+		COUNT(*) FILTER (WHERE order_delivered_carrier_date IS NOT NULL AND order_approved_at IS NOT NULL) AS carrier_count,
+		COUNT(*) FILTER (WHERE order_delivered_customer_date < order_delivered_carrier_date) AS customer_to_carrier,
+		COUNT(*) FILTER (WHERE order_delivered_customer_date IS NOT NULL AND order_delivered_carrier_date IS NOT NULL) AS customer_count
+	FROM orders
+)
+
+SELECT
+	approved_to_purchase,
+	approved_count,
+	ROUND(approved_to_purchase::numeric / NULLIF(approved_count, 0) * 100, 3) AS approved_to_purchase_pct,
+	carrier_to_approved,
+	carrier_count,
+	ROUND(carrier_to_approved::numeric / NULLIF(carrier_count, 0) * 100, 3) AS carrier_to_approved_pct,
+	customer_to_carrier,
+	customer_count,
+	ROUND(customer_to_carrier::numeric / NULLIF(customer_count, 0) * 100, 3) AS customer_to_carrier_pct
+FROM checks;
+
+-- Нарушений approved < purchase нет.
+
+-- carrier < approved: 1359 из 97644 (1.39%). Заказ передан
+-- перевозчику раньше, чем подтверждён платёж. Две версии:
+-- задержка записи о платеже либо отгрузка по авторизации, не
+-- дожидаясь проводки (вероятно для boleto). Различать по величине
+-- разрыва и типу платежа. На общее время доставки не влияет —
+-- исключаем только из расчёта интервала "оплата → отгрузка".
+
+-- customer < carrier: 23 из 96475 (0.024%). Дата отгрузки
+-- записана позже даты вручения. Артефакт логирования. Исключаем
+-- из расчёта времени в пути: длительность вышла бы отрицательной.
+
+
 
 
