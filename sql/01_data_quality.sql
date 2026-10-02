@@ -111,5 +111,59 @@ FROM checks;
 -- из расчёта времени в пути: длительность вышла бы отрицательной.
 
 
+-- 4. ДУБЛИ В ОТЗЫВАХ
+
+SELECT
+	(SELECT COUNT(*) FROM order_reviews) AS total_rows,
+    (SELECT COUNT(*) FROM (
+        SELECT review_id FROM order_reviews GROUP BY review_id HAVING COUNT(*) > 1
+     )) AS review_ids_with_duplicates,
+	 (SELECT COUNT(*) FROM (
+		SELECT review_id FROM order_reviews GROUP BY review_id HAVING COUNT(*) = 1
+	 )) AS review_ids_with_no_duplicates,
+	 (SELECT COUNT(*) FROM (
+        SELECT order_id FROM order_reviews GROUP BY order_id HAVING COUNT(*) = 1
+     )) AS orders_with_one_review,
+    (SELECT COUNT(*) FROM (
+        SELECT order_id FROM order_reviews GROUP BY order_id HAVING COUNT(*) > 1
+     )) AS orders_with_several_reviews;
+
+-- Количество всего строк 99224.
+-- Отзывы где review_id дублируются 789, а review_id встречается один раз 97621.
+-- Заказы с одним отзывом 98126, а заказов с несколькими отзывами 547.
+
+SELECT CASE WHEN distinct_orders > 1 THEN 'разные заказы'
+            ELSE 'тот же заказ' END AS pattern,
+       COUNT(*) AS review_ids
+FROM (
+    SELECT review_id,
+           COUNT(*) AS rows,
+           COUNT(DISTINCT order_id) AS distinct_orders
+    FROM order_reviews
+    GROUP BY review_id
+    HAVING COUNT(*) > 1
+) t
+GROUP BY 1;
+
+-- только одна строка: 'разные заказы' -> 789
+
+-- Настоящих дублей строк нет: все 789 повторяющихся review_id
+-- относятся к разным заказам, пара (review_id, order_id) уникальна.
+-- Один опрос покрывает покупку целиком, которая могла разбиться
+-- на несколько заказов.
+
+-- При джойне размножение дают не они, а 547 заказов с несколькими
+-- разными отзывами. Перед соединением отзывы
+-- сворачиваем до одной строки на заказ (последний по
+-- review_creation_date).
+
+-- Ограничение для анализа связи сроков с оценками: у 789 отзывов
+-- (0.8%) оценка относится к нескольким заказам сразу, поэтому
+-- привязка опоздания к конкретной оценке для них приблизительна.
+
+
+
+
+
 
 
