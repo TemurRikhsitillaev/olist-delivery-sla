@@ -36,9 +36,8 @@ ORDER BY orders_count DESC;
 -- записей (0.025%), на метрики не влияют. Восемь без даты вручения
 -- исключаем из расчёта сроков — разбор в проверке 2.
 
--- Статус shipped (1107 заказов, 1.1%) — отдельный объект: заказы
--- в пути на момент выгрузки. Это цензурирование, разбор в
--- проверке 6.
+-- Статус shipped (1107 заказов, 1.1%) — отдельный объект:
+-- отгружены, вручение не зафиксировано. Разбор в проверке 6.
 
 -- order_estimated_delivery_date заполнена во всех 99441 заказах.
 
@@ -81,7 +80,9 @@ WITH checks AS (
 		COUNT(*) FILTER (WHERE order_delivered_carrier_date < order_approved_at) AS carrier_to_approved,
 		COUNT(*) FILTER (WHERE order_delivered_carrier_date IS NOT NULL AND order_approved_at IS NOT NULL) AS carrier_count,
 		COUNT(*) FILTER (WHERE order_delivered_customer_date < order_delivered_carrier_date) AS customer_to_carrier,
-		COUNT(*) FILTER (WHERE order_delivered_customer_date IS NOT NULL AND order_delivered_carrier_date IS NOT NULL) AS customer_count
+		COUNT(*) FILTER (WHERE order_delivered_customer_date IS NOT NULL AND order_delivered_carrier_date IS NOT NULL) AS customer_count,
+		COUNT(*) FILTER (WHERE order_delivered_carrier_date < order_purchase_timestamp) AS carrier_to_purchase,
+		COUNT(*) FILTER (WHERE order_delivered_carrier_date IS NOT NULL) AS carrier_base
 	FROM orders
 )
 
@@ -94,8 +95,13 @@ SELECT
 	ROUND(carrier_to_approved::numeric / NULLIF(carrier_count, 0) * 100, 3) AS carrier_to_approved_pct,
 	customer_to_carrier,
 	customer_count,
-	ROUND(customer_to_carrier::numeric / NULLIF(customer_count, 0) * 100, 3) AS customer_to_carrier_pct
+	ROUND(customer_to_carrier::numeric / NULLIF(customer_count, 0) * 100, 3) AS customer_to_carrier_pct,
+	carrier_to_purchase,
+	carrier_base,
+	ROUND(carrier_to_purchase::numeric / NULLIF(carrier_base, 0) * 100, 3) AS carrier_to_purchase_pct
 FROM checks;
+
+-- ВЫВОД
 
 -- Нарушений approved < purchase нет.
 
@@ -105,6 +111,10 @@ FROM checks;
 -- дожидаясь проводки (вероятно для boleto). Различать по величине
 -- разрыва и типу платежа. На общее время доставки не влияет —
 -- исключаем только из расчёта интервала "оплата → отгрузка".
+
+-- carrier < purchase: 166 заказов (0.17%). Отгрузка записана
+-- раньше оформления заказа — самое частое нарушение хронологии
+-- в данных. Исключаем из расчёта интервала "покупка → отгрузка".
 
 -- customer < carrier: 23 из 96475 (0.024%). Дата отгрузки
 -- записана позже даты вручения. Артефакт логирования. Исключаем
@@ -147,6 +157,8 @@ GROUP BY 1;
 
 -- только одна строка: 'разные заказы' -> 789
 
+-- ВЫВОД
+
 -- Настоящих дублей строк нет: все 789 повторяющихся review_id
 -- относятся к разным заказам, пара (review_id, order_id) уникальна.
 -- Один опрос покрывает покупку целиком, которая могла разбиться
@@ -164,24 +176,18 @@ GROUP BY 1;
 
 -- 5. РАСПРЕДЕЛЕНИЕ ЗАКАЗОВ ПО МЕСЯЦАМ
 
--- WITH orders_count_by_month AS (
--- 	SELECT
--- 		DATE_TRUNC('month', order_purchase_timestamp)::date AS month,
--- 		COUNT(*) AS orders_count
--- 	FROM orders
--- 	GROUP BY 1
--- )
+WITH orders_count_by_month AS (
+	SELECT
+		DATE_TRUNC('month', order_purchase_timestamp)::date AS month,
+		COUNT(*) AS orders_count
+	FROM orders
+	GROUP BY 1
+)
+SELECT *
+FROM orders_count_by_month
+ORDER BY month;
 
--- SELECT *
--- FROM orders_count_by_month
--- ORDER BY month;
-
--- SELECT
--- 	ROUND(AVG(orders_count)::numeric, 2) AS avg_orders_count,
--- 	MIN(orders_count) AS min_orders_count,
--- 	MAX(orders_count) AS max_orders_count,
--- 	ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY orders_count)::numeric, 2) AS median_orders_count
--- FROM orders_count_by_month;
+-- Заказы последних двух месяцев — посмотреть целиком, их всего 20
 
 SELECT *
 FROM orders
@@ -218,3 +224,91 @@ ORDER BY order_purchase_timestamp;
 -- Отдельно: ноябрь 2017 — 7544 заказа, максимум за всю историю
 -- при соседних 4631 и 5673. Чёрная пятница. Не аномалия данных,
 -- а повод проверить, просел ли SLA в пиковую нагрузку.
+
+
+-- 6. ЦЕНЗУРИРОВАНИЕ НА КОНЦЕ ПЕРИОДА
+
+-- Сколько заказов осталось в статусе shipped
+
+SELECT COUNT(*) AS shipped_orders
+FROM orders
+WHERE order_status = 'shipped';
+
+-- Сколько дней прошло от покупки до конца периода данных.
+-- "Сегодня" здесь — максимальная дата в данных, а не NOW().
+
+WITH days_passed_orders AS (
+	SELECT order_id,
+		EXTRACT(DAY FROM (
+			(SELECT MAX(order_purchase_timestamp) FROM orders) - order_purchase_timestamp
+		)) AS days_passed
+	FROM orders
+	WHERE order_status = 'shipped'
+)
+SELECT MIN(days_passed) AS min_days_passed,
+	ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY days_passed)::numeric, 0) AS median_days_passed,
+	ROUND(AVG(days_passed)::numeric, 0) AS avg_days_passed,
+	MAX(days_passed) AS max_days_passed
+FROM days_passed_orders;
+
+-- Распределение зависших заказов по годам покупки
+
+SELECT EXTRACT(YEAR FROM order_purchase_timestamp) AS year,
+	COUNT(*) AS shipped_orders
+FROM orders
+WHERE order_status = 'shipped'
+GROUP BY 1
+ORDER BY 1;
+
+-- ВЫВОД
+
+-- 1107 заказов (1.1%) в статусе shipped: отгружены, вручение не
+-- зафиксировано. Время с момента покупки до конца периода данных:
+-- минимум 44 дня, медиана 283, среднее 315, максимум 772.
+
+-- ЦЕНЗУРИРОВАНИЯ В ДАННЫХ НЕТ. Если бы это были заказы в пути на
+-- момент выгрузки, они сидели бы в последних днях периода — день,
+-- два, неделя с момента покупки. Минимум 44 дня означает, что
+-- заказов, отгруженных в последние шесть недель, в данных нет
+-- вообще. Это согласуется с проверкой 5: выгрузка включает только
+-- заказы, достигшие конечного состояния, поэтому свежие заказы
+-- "в пути" в неё не попали.
+
+-- Заказ, отгруженный 283 дня назад и не доставленный, не едет —
+-- он потерян, возвращён без оформления или факт вручения не
+-- записан. Это зависшие заказы, а не заказы в пути.
+
+-- Следствие: отрезать последние недели периода не требуется,
+-- метрики сроков можно считать по всему рабочему периоду.
+
+-- Смещение всё же остаётся, но другого рода: эти 1107 — заказы,
+-- которые не доехали никогда, то есть заведомо худшие случаи. Они
+-- выпадают из расчёта времени доставки, значит реальная картина
+-- хуже посчитанной. Доля 1.1%, на медиану не влияет, но в выводах
+-- указывается.
+
+-- Распределение по годам покупки: 9 заказов 2016 года, 530 — 2017,
+-- 568 — 2018. Зависшие заказы встречаются во всём периоде
+-- равномерно, а не скапливаются в конце — ещё одно подтверждение,
+-- что дело не в цензурировании.
+
+
+-- ============================================================
+-- ИТОГ ЭТАПА: РАБОЧАЯ ВЫБОРКА
+-- ============================================================
+
+-- Период: 2017-01-01 … 2018-08-31 (20 месяцев).
+-- Статус: delivered — единственный, содержащий дату вручения.
+-- Из него исключаются 8 заказов без order_delivered_customer_date.
+
+-- Для расчёта отдельных интервалов дополнительно исключаются
+-- записи с нарушенной хронологией:
+--   покупка → отгрузка: 166 заказов (carrier < purchase)
+--   оплата → отгрузка: 1359 заказов (carrier < approved)
+--   отгрузка → вручение: 23 заказа (customer < carrier)
+
+-- Известные ограничения выборки:
+--   1107 зависших заказов (1.1%) не доехали и в расчёт сроков
+--   не попадают — реальные сроки хуже посчитанных.
+--   789 отзывов (0.8%) относятся к нескольким заказам сразу —
+--   привязка оценки к конкретному опозданию приблизительна.
