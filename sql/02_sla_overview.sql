@@ -200,3 +200,61 @@ ORDER BY bucket_no;
 -- в карточке товара; этих данных в выборке нет.
 
 
+-- ------------------------------------------------------------
+-- 3. НАСКОЛЬКО ОПАЗДЫВАЮТ ТЕ, КТО ОПАЗДЫВАЕТ
+-- ------------------------------------------------------------
+
+WITH bucketed AS (
+	SELECT
+		CASE
+			WHEN days_vs_estimate BETWEEN 1 AND 3 THEN '1-3'
+			WHEN days_vs_estimate BETWEEN 4 AND 7 THEN '4-7'
+			WHEN days_vs_estimate BETWEEN 8 AND 14 THEN '8-14'
+			WHEN days_vs_estimate BETWEEN 15 AND 23 THEN '15-23'
+			WHEN days_vs_estimate BETWEEN 24 AND 30 THEN '24-30'
+			WHEN days_vs_estimate BETWEEN 31 AND 60 THEN '31-60'
+			ELSE '61+'
+		END AS bucket,
+		CASE
+			WHEN days_vs_estimate BETWEEN 1 AND 3 THEN 1
+			WHEN days_vs_estimate BETWEEN 4 AND 7 THEN 2
+			WHEN days_vs_estimate BETWEEN 8 AND 14 THEN 3
+			WHEN days_vs_estimate BETWEEN 15 AND 23 THEN 4
+			WHEN days_vs_estimate BETWEEN 24 AND 30 THEN 5
+			WHEN days_vs_estimate BETWEEN 31 AND 60 THEN 6
+			ELSE 7
+		END AS bucket_no,
+		days_vs_estimate
+	FROM delivered_orders
+	WHERE is_late
+)
+
+SELECT bucket,
+	COUNT(*) AS orders,
+	ROUND(COUNT(*) ::numeric / SUM(COUNT(*)) OVER () * 100, 2) AS pct,
+	SUM(COUNT(*)) OVER (ORDER BY bucket_no) AS cum_orders,
+	ROUND(SUM(COUNT(*)) OVER (ORDER BY bucket_no) ::numeric / SUM(COUNT(*)) OVER () * 100, 2) AS cum_pct,
+	ROUND(COUNT(*)::numeric / (SELECT COUNT(*) FROM delivered_orders) * 100, 2) AS pct_of_all
+FROM bucketed
+GROUP BY bucket_no, bucket
+ORDER BY bucket_no;
+
+-- SELECT
+-- 	PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY days_vs_estimate) AS median,
+-- 	PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY days_vs_estimate) AS p90,
+-- 	MAX(days_vs_estimate) AS max_days_vs_estimate
+-- FROM bucketed;
+
+-- Дальше все доли считаются от 6531 опоздавшего заказа.
+-- Самая большая доля опозданий в первые 3 дня (28.62% - 1869). Дальше начинается спад.
+-- Половина опоздавших заказов уложились в 7 дней. 9 из 10 опоздавших заказов уложились в 22 дня или меньше (p90 - 22).
+-- 79 заказов опоздали на 2 месяца и больше, максимум 188 дней, и это только те, которые доехали. Кроме того,
+-- 1107 заказов не доехали вовсе и в таблицу не попали; самые тяжёлые случаи находятся именно там.
+-- В пересчёте на всю выборку (96 203 заказа) 3 заказа из 100 приезжают больше чем на неделю позже обещания.
+-- Гипотеза о том, что опоздания в основном незначительные, не подтвердилась. Чуть меньше трети укладываются в три дня,
+-- а больше 2 недель опаздывают 1382 заказа - это 21% опозданий и 1.44% всей выборки. Для компании Olist за 20 месяцев
+-- это не единичные случаи, а регулярно воспроизводящийся сбой.
+
+
+
+
