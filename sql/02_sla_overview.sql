@@ -2,7 +2,7 @@
 -- ЭТАП 3. МЕТРИКИ SLA
 -- ============================================================
 -- Рабочая выборка определена и обоснована в 01_data_quality.sql.
--- Этот файл создаёт представление delivered_orders; файлы 03-06
+-- Этот файл создаёт представление delivered_orders; файлы 03-05
 -- на него опираются, поэтому выполнять его надо до них.
 
 
@@ -309,7 +309,7 @@ WITH by_month AS (
 	    	ORDER BY order_estimated_delivery_date::date - order_purchase_timestamp::date
 		)::numeric, 0)
 		- ROUND(PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY delivery_days)::numeric, 0)
-	AS cushion_days
+	    AS cushion_days
 	FROM delivered_orders
 	GROUP BY 1
 )
