@@ -40,13 +40,13 @@ reviews_by_order AS (
 delivery_bucket AS (
 	SELECT
 		CASE
-			WHEN delivery_days <= 3 THEN '0-3'
-			WHEN delivery_days BETWEEN 4 AND 7 THEN '4-7'
-			WHEN delivery_days BETWEEN 8 AND 14 THEN '8-14'
-			WHEN delivery_days BETWEEN 15 AND 23 THEN '15-23'
-			WHEN delivery_days BETWEEN 24 AND 30 THEN '24-30'
-			WHEN delivery_days BETWEEN 31 AND 60 THEN '31-60'
-			ELSE '61+'
+			WHEN delivery_days <= 3 THEN '0-3 дн.'
+			WHEN delivery_days BETWEEN 4 AND 7 THEN '4-7 дн.'
+			WHEN delivery_days BETWEEN 8 AND 14 THEN '8-14 дн.'
+			WHEN delivery_days BETWEEN 15 AND 23 THEN '15-23 дн.'
+			WHEN delivery_days BETWEEN 24 AND 30 THEN '24-30 дн.'
+			WHEN delivery_days BETWEEN 31 AND 60 THEN '31-60 дн.'
+			ELSE '61+ дн.'
 		END AS bucket,
 		CASE
 			WHEN delivery_days <= 3 THEN 1
