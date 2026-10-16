@@ -9,6 +9,7 @@
 - [Дашборд в Looker Studio](https://lookerstudio.google.com/reporting/19e3bea4-2ed3-4d69-982b-143305b79107)
 - [Выгрузка в Google Sheets](https://docs.google.com/spreadsheets/d/1KSxUSsLdf6hOMw9gp8QS_EbDOKgxB_tLGR1ydnDxXNo)
 - Датасет: [Brazilian E-Commerce Public Dataset by Olist](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
+- [olist-pandas](https://github.com/TemurRikhsitillaev/olist-pandas) — тот же анализ, воспроизведённый на pandas; все контрольные числа совпали
 
 ## Данные
 
